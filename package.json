@@ -1,0 +1,30 @@
+{
+  "name": "apex-fusion",
+  "version": "1.0.0",
+  "description": "Apex Fusion - Student Learning Platform with Cloudflare Workers + Hono",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create apex-fusion-db",
+    "db:migrate": "wrangler d1 execute apex-fusion-db --file=./schema.sql",
+    "db:local": "wrangler d1 execute apex-fusion-db --local --file=./schema.sql"
+  },
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "hono",
+    "d1",
+    "r2"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240512.0",
+    "typescript": "^5.0.0",
+    "wrangler": "^3.48.0"
+  },
+  "dependencies": {
+    "hono": "^4.0.0"
+  }
+}
