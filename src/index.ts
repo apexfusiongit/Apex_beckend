@@ -16,12 +16,34 @@ app.use('*', cors());
 app.use('*', logger());
 
 // Health check
-app.get('/', (c) => {
-  return c.json({ 
-    message: 'Apex Fusion API',
-    version: '1.0.0',
-    environment: c.env.ENVIRONMENT 
-  });
+app.get('/', async (c) => {
+  try {
+    // Check database connectivity
+    const dbResult = await c.env.DB.prepare('SELECT 1 as health').first();
+    const dbHealthy = !!dbResult;
+    
+    return c.json({ 
+      status: 'healthy',
+      message: 'Apex Fusion API',
+      version: '1.0.0',
+      environment: c.env.ENVIRONMENT,
+      checks: {
+        database: dbHealthy ? 'connected' : 'disconnected',
+        storage: 'available',
+        cache: 'available',
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    return c.json({ 
+      status: 'unhealthy',
+      message: 'Apex Fusion API',
+      version: '1.0.0',
+      environment: c.env.ENVIRONMENT,
+      error: 'Database connection failed',
+      timestamp: new Date().toISOString()
+    }, 503);
+  }
 });
 
 // Auth routes
@@ -71,6 +93,10 @@ app.route('/api/live-classes', liveClassRoutes);
 // Teacher routes
 import teacherRoutes from './routes/teachers';
 app.route('/api/teachers', teacherRoutes);
+
+// Student routes
+import studentRoutes from './routes/students';
+app.route('/api/students', studentRoutes);
 
 // School routes
 import schoolRoutes from './routes/schools';

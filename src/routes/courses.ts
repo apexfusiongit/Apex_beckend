@@ -12,7 +12,7 @@ courses.get('/', async (c) => {
   const subjectFilter = c.req.query('subject');
   
   let query = 'SELECT c.*, s.name as subject_name FROM courses c LEFT JOIN subjects s ON c.subject_id = s.id WHERE c.status = ?';
-  const params: any[] = ['active'];
+  const params = ['active'];
   
   if (classFilter) {
     query += ' AND c.class = ?';

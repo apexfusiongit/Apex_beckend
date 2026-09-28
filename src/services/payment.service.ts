@@ -104,19 +104,39 @@ export class PaymentService {
     //   return false;
     // }
     
-    const { orderId, paymentId, status } = payload;
+    const { orderId, paymentId, status, idempotencyKey } = payload;
+    
+    // Idempotency check: prevent processing the same webhook twice
+    if (idempotencyKey) {
+      const existingWebhook = await this.db.prepare(
+        'SELECT id FROM payments WHERE order_id = ? AND payment_id = ? AND status = ?'
+      ).bind(orderId, paymentId, 'completed').first();
+      
+      if (existingWebhook) {
+        // Already processed, return success to acknowledge
+        return true;
+      }
+    }
     
     if (status === 'completed' || status === 'success') {
-      await this.verifyPayment({ orderId, paymentId, status: 'completed' });
-      
-      // Get payment details to activate subscription
+      // Use transaction-like behavior with idempotency
       const payment = await this.db.prepare(
-        'SELECT user_id FROM payments WHERE order_id = ?'
+        'SELECT user_id, status FROM payments WHERE order_id = ?'
       ).bind(orderId).first();
       
-      if (payment) {
-        // Default to annual plan for now
-        await this.activateSubscription(payment.user_id as number, 2);
+      if (!payment) {
+        return false;
+      }
+      
+      // Only process if payment is still pending (idempotency)
+      if (payment.status === 'pending') {
+        const verified = await this.verifyPayment({ orderId, paymentId, status: 'completed' });
+        
+        if (verified && payment) {
+          // Get plan_id from payment or default to annual
+          const planId = 2; // Default to annual plan
+          await this.activateSubscription(payment.user_id as number, planId);
+        }
       }
     }
     

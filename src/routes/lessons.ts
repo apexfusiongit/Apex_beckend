@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { authMiddleware, requireStudent } from '../middleware/auth';
 
 type Bindings = {
   DB: D1Database;
@@ -68,33 +69,43 @@ lessons.delete('/:id', async (c) => {
   return c.json({ success: true, message: 'Lesson deleted' });
 });
 
-// Get video URL from R2
-lessons.get('/:id/video', async (c) => {
+// Get video URL from R2 (requires authentication and enrollment verification)
+lessons.get('/:id/video', authMiddleware, requireStudent, async (c) => {
+  const userId = c.get('userId');
   const id = c.req.param('id');
   
+  // Get lesson and verify user is enrolled in the course
   const lesson = await c.env.DB.prepare(
-    'SELECT video_key FROM lessons WHERE id = ?'
+    `SELECT l.video_key, ch.course_id 
+     FROM lessons l 
+     LEFT JOIN chapters ch ON l.chapter_id = ch.id 
+     WHERE l.id = ?`
   ).bind(id).first();
   
   if (!lesson) {
-    return c.json({ success: false, message: 'Lesson not found' }, 404);
+    return c.json({ success: false, error: 'Lesson not found' }, 404);
   }
   
-  try {
-    const object = await c.env.STORAGE.get(lesson.video_key as string);
-    
-    if (!object) {
-      return c.json({ success: false, message: 'Video not found' }, 404);
-    }
-    
-    return new Response(object.body, {
-      headers: {
-        'Content-Type': object.httpMetadata?.contentType || 'video/mp4',
-      },
-    });
-  } catch (error) {
-    return c.json({ success: false, message: 'Failed to retrieve video' }, 500);
+  // Verify enrollment in the course
+  const enrollment = await c.env.DB.prepare(
+    'SELECT * FROM enrollments WHERE user_id = ? AND course_id = ?'
+  ).bind(userId, lesson.course_id).first();
+  
+  if (!enrollment) {
+    return c.json({ success: false, error: 'Not enrolled in this course' }, 403);
   }
+  
+  const videoKey = lesson.video_key as string;
+  
+  // Generate signed URL for R2
+  const object = await c.env.STORAGE.get(videoKey);
+  
+  if (!object) {
+    return c.json({ success: false, error: 'Video not found' }, 404);
+  }
+  
+  // Return the video URL
+  return c.json({ success: true, videoUrl: object.httpMetadata?.location });
 });
 
 export default lessons;

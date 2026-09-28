@@ -1,4 +1,6 @@
--- Migration 0012: Referrals table
+-- Migration 0012: Fix referrals table column name
+DROP TABLE IF EXISTS referrals;
+
 CREATE TABLE IF NOT EXISTS referrals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     referrer_id INTEGER NOT NULL,

@@ -1,40 +1,43 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
+import { hashPassword, verifyPassword } from '../utils/password';
+import { validate } from '../middleware/validation';
+import { registerUserSchema, loginUserSchema } from '../validators/schemas';
 
 type Bindings = {
   DB: D1Database;
   JWT_SECRET: string;
 };
 
-const auth = new Hono<{ Bindings: Bindings }>();
+type Variables = {
+  validatedData?: any;
+};
 
-// Simple password hashing (for development - use bcrypt in production)
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  const passwordHash = await hashPassword(password);
-  return passwordHash === hash;
-}
+const auth = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // Simple JWT token generation (for development - use proper JWT library in production)
-function generateToken(userId: number, email: string): string {
+function generateToken(userId: number, email: string, role: string): string {
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = btoa(JSON.stringify({ userId, email, exp: Date.now() + 3600000 }));
+  const payload = btoa(JSON.stringify({ userId, email, role, exp: Date.now() + 3600000 }));
   const signature = btoa(`${header}.${payload}.secret`);
   return `${header}.${payload}.${signature}`;
 }
 
 // Register new user
-auth.post('/register', async (c) => {
-  const { name, email, phone, password, role, class: studentClass, adminCode } = await c.req.json();
+auth.post('/register', validate(registerUserSchema), async (c) => {
+  const data = c.get('validatedData') as z.infer<typeof registerUserSchema>;
+  const { name, email, phone, password, role, class: studentClass, adminCode } = data;
   
-  if (!name || !email || !password) {
-    return c.json({ success: false, message: 'Name, email, and password are required' }, 400);
+  // Check if email already exists
+  const existingUser = await c.env.DB.prepare(
+    'SELECT id FROM users WHERE email = ?'
+  ).bind(email).first();
+  
+  if (existingUser) {
+    return c.json({ 
+      success: false, 
+      message: 'Email already registered. Please use a different email or login.' 
+    }, 409);
   }
   
   // Admin registration requires admin code
@@ -57,7 +60,7 @@ auth.post('/register', async (c) => {
     ).bind(name, email, phone ?? null, passwordHash, role || 'student', studentClass ?? null).run();
     
     const userId = result.meta.last_row_id;
-    const token = generateToken(userId, email);
+    const token = generateToken(userId, email, role || 'student');
     
     return c.json({ 
       success: true, 
@@ -72,12 +75,9 @@ auth.post('/register', async (c) => {
 });
 
 // Login user
-auth.post('/login', async (c) => {
-  const { email, password } = await c.req.json();
-  
-  if (!email || !password) {
-    return c.json({ success: false, message: 'Email and password are required' }, 400);
-  }
+auth.post('/login', validate(loginUserSchema), async (c) => {
+  const data = c.get('validatedData') as z.infer<typeof loginUserSchema>;
+  const { email, password } = data;
   
   const user = await c.env.DB.prepare(
     'SELECT id, name, email, phone, role, class, password_hash, created_at FROM users WHERE email = ?'
@@ -93,7 +93,7 @@ auth.post('/login', async (c) => {
     return c.json({ success: false, message: 'Invalid credentials' }, 401);
   }
   
-  const token = generateToken(user.id as number, user.email as string);
+  const token = generateToken(user.id as number, user.email as string, user.role as string);
   
   const { password_hash, ...userWithoutPassword } = user;
   
