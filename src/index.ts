@@ -4,21 +4,31 @@ import { logger } from 'hono/logger';
 
 type Bindings = {
   DB: D1Database;
-  STORAGE: R2Bucket;
-  CACHE: KVNamespace;
   ENVIRONMENT: string;
+  CORS_ORIGIN?: string;
+  JWT_SECRET?: string;
+  ADMIN_EMAIL?: string;
+  ADMIN_PASSWORD?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 // Middleware
-app.use('*', cors());
+app.use('*', (c, next) => {
+  const allowedOrigins = (c.env.CORS_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return cors({
+    origin: (origin) => allowedOrigins.includes(origin) ? origin : allowedOrigins[0]
+  })(c, next);
+});
 app.use('*', logger());
 
 // Health check
 app.get('/', async (c) => {
   try {
-    // Check database connectivity
     const dbResult = await c.env.DB.prepare('SELECT 1 as health').first();
     const dbHealthy = !!dbResult;
     
@@ -29,8 +39,6 @@ app.get('/', async (c) => {
       environment: c.env.ENVIRONMENT,
       checks: {
         database: dbHealthy ? 'connected' : 'disconnected',
-        storage: 'available',
-        cache: 'available',
       },
       timestamp: new Date().toISOString()
     });
@@ -46,72 +54,16 @@ app.get('/', async (c) => {
   }
 });
 
-// Auth routes
-import authRoutes from './routes/auth';
-app.route('/api/auth', authRoutes);
+app.get('/health', (c) => c.json({ success: true, message: 'Backend is running' }));
 
-// Subject routes
-import subjectRoutes from './routes/subjects';
-app.route('/api/subjects', subjectRoutes);
-
-// Course routes
-import courseRoutes from './routes/courses';
-app.route('/api/courses', courseRoutes);
-
-// Lesson routes
-import lessonRoutes from './routes/lessons';
-app.route('/api/lessons', lessonRoutes);
-
-// Progress routes
-import progressRoutes from './routes/progress';
-app.route('/api/progress', progressRoutes);
-
-// Test routes
-import testRoutes from './routes/tests';
-app.route('/api/tests', testRoutes);
-
-// AI routes
-import aiRoutes from './routes/ai';
-app.route('/api/ai', aiRoutes);
-
-// Payment routes
-import paymentRoutes from './routes/payments';
-app.route('/api/payments', paymentRoutes);
-
-// Subscription routes
-import subscriptionRoutes from './routes/subscriptions';
-app.route('/api/subscriptions', subscriptionRoutes);
-
-// Referral routes
-import referralRoutes from './routes/referrals';
-app.route('/api/referrals', referralRoutes);
-
-// Live classes routes
-import liveClassRoutes from './routes/liveClasses';
-app.route('/api/live-classes', liveClassRoutes);
-
-// Teacher routes
-import teacherRoutes from './routes/teachers';
-app.route('/api/teachers', teacherRoutes);
-
-// Student routes
-import studentRoutes from './routes/students';
-app.route('/api/students', studentRoutes);
-
-// School routes
-import schoolRoutes from './routes/schools';
-app.route('/api/schools', schoolRoutes);
-
-// Lead routes
-import leadRoutes from './routes/leads';
-app.route('/api/leads', leadRoutes);
-
-// Admin routes
-import adminRoutes from './routes/admin';
-app.route('/api/admin', adminRoutes);
-
-// User routes
-import userRoutes from './routes/users';
-app.route('/api/users', userRoutes);
+import marketingSignup from './routes/marketingSignup';
+import auth from './routes/auth';
+import admin from './routes/admin';
+app.route('/api/signup', marketingSignup);
+app.route('/api/v1/signup', marketingSignup);
+app.route('/api/auth', auth);
+app.route('/api/v1/auth', auth);
+app.route('/api/admin', admin);
+app.route('/api/v1/admin', admin);
 
 export default app;

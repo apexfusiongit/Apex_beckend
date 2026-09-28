@@ -6,7 +6,10 @@ import { registerUserSchema, loginUserSchema } from '../validators/schemas';
 
 type Bindings = {
   DB: D1Database;
-  JWT_SECRET: string;
+  JWT_SECRET?: string;
+  ADMIN_EMAIL?: string;
+  ADMIN_PASSWORD?: string;
+  ADMIN_CODE?: string;
 };
 
 type Variables = {
@@ -42,7 +45,7 @@ auth.post('/register', validate(registerUserSchema), async (c) => {
   
   // Admin registration requires admin code
   if (role === 'admin') {
-    if (adminCode !== 'ADMIN_SECRET_2026') {
+    if (adminCode !== (c.env.ADMIN_CODE ?? 'ADMIN_SECRET_2026')) {
       return c.json({ success: false, message: 'Invalid admin code' }, 403);
     }
   }
@@ -80,17 +83,20 @@ auth.post('/login', validate(loginUserSchema), async (c) => {
   const { email, password } = data;
   
   const user = await c.env.DB.prepare(
-    'SELECT id, name, email, phone, role, class, password_hash, created_at FROM users WHERE email = ?'
-  ).bind(email).first();
-  
-  if (!user) {
-    return c.json({ success: false, message: 'Invalid credentials' }, 401);
-  }
-  
-  const isValid = await verifyPassword(password, user.password_hash as string);
-  
-  if (!isValid) {
-    return c.json({ success: false, message: 'Invalid credentials' }, 401);
+    'SELECT id, first_name, last_name, email, phone_number, role, password_hash, status FROM users WHERE email = ?'
+  ).bind(email).first<{
+    id: number;
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone_number: string | null;
+    role: string;
+    password_hash: string;
+    status: string;
+  }>();
+
+  if (!user || user.status !== 'Active' || !(await verifyPassword(password, user.password_hash))) {
+    return c.json({ success: false, message: 'Invalid email or password' }, 401);
   }
   
   const token = generateToken(user.id as number, user.email as string, user.role as string);
@@ -102,58 +108,13 @@ auth.post('/login', validate(loginUserSchema), async (c) => {
     success: true, 
     token, 
     user: {
-      ...userWithoutPassword,
-      redirectPath: getRedirectPath(user.role as string)
-    }
+      id: user.id,
+      name: `${user.first_name} ${user.last_name}`,
+      email: user.email,
+      phone: user.phone_number,
+      role: user.role
+    },
   });
-});
-
-// Helper function to determine redirect path based on role
-function getRedirectPath(role: string): string {
-  switch (role) {
-    case 'admin':
-      return '/admin';
-    case 'teacher':
-      return '/teacher/dashboard';
-    case 'school':
-      return '/school/dashboard';
-    default:
-      return '/dashboard';
-  }
-}
-
-// Get current user
-auth.get('/me', async (c) => {
-  const authHeader = c.req.header('Authorization');
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return c.json({ success: false, message: 'Unauthorized' }, 401);
-  }
-  
-  const token = authHeader.substring(7);
-  
-  // Simple token parsing (for development)
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    const userId = payload.userId;
-    
-    const user = await c.env.DB.prepare(
-      'SELECT id, name, email, phone, role, class, created_at FROM users WHERE id = ?'
-    ).bind(userId).first();
-    
-    if (!user) {
-      return c.json({ success: false, message: 'User not found' }, 404);
-    }
-    
-    return c.json({ success: true, user });
-  } catch (error) {
-    return c.json({ success: false, message: 'Invalid token' }, 401);
-  }
-});
-
-// Logout (client-side token removal)
-auth.post('/logout', async (c) => {
-  return c.json({ success: true, message: 'Logged out successfully' });
 });
 
 export default auth;

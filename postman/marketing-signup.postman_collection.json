@@ -1,0 +1,186 @@
+{
+  "info": {
+    "name": "Marketing Signup API",
+    "description": "Postman requests for the Cloudflare Worker marketing signup backend.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8787"
+    },
+    {
+      "key": "signupEmail",
+      "value": "azam{{$timestamp}}@example.com"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/health"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+              "pm.test('Health is successful', function () { pm.expect(pm.response.json().success).to.eql(true); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Signup - Student Full Payload",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Azam\",\n  \"lastName\": \"Khan\",\n  \"email\": \"{{signupEmail}}\",\n  \"phoneNumber\": \"9876543210\",\n  \"password\": \"TestPassword123!\",\n  \"role\": \"Student\",\n  \"dob\": \"2000-05-15\",\n  \"gender\": \"Male\",\n  \"location\": \"Bengaluru, India\",\n  \"institutionName\": \"ABC College\",\n  \"gradeOrSubject\": \"Data Science\",\n  \"marketingPreferences\": {\n    \"optInEmail\": true,\n    \"optInSMS\": false,\n    \"optInPush\": true,\n    \"preferredContentType\": \"Courses\"\n  },\n  \"referralSource\": \"Google Ads\",\n  \"deviceType\": \"Mobile\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/signup"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('HTTP 201', function () { pm.response.to.have.status(201); });",
+              "const body = pm.response.json();",
+              "pm.test('Signup succeeded', function () { pm.expect(body.success).to.eql(true); });",
+              "pm.test('User ID returned', function () { pm.expect(body.data.userId).to.be.a('number'); });",
+              "pm.expect(body).to.not.have.property('password');",
+              "pm.expect(body).to.not.have.property('passwordHash');",
+              "pm.collectionVariables.set('createdUserId', body.data.userId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Signup - Parent",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Priya\",\n  \"lastName\": \"Sharma\",\n  \"email\": \"parent{{$timestamp}}@example.com\",\n  \"password\": \"ParentPass123\",\n  \"role\": \"Parent\",\n  \"marketingPreferences\": {\n    \"optInEmail\": false,\n    \"optInSMS\": true,\n    \"optInPush\": false,\n    \"preferredContentType\": \"Events\"\n  },\n  \"referralSource\": \"Organic\",\n  \"deviceType\": \"Desktop\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/signup"
+      }
+    },
+    {
+      "name": "Signup - Teacher",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Ravi\",\n  \"lastName\": \"Kumar\",\n  \"email\": \"teacher{{$timestamp}}@example.com\",\n  \"password\": \"TeacherPass123\",\n  \"role\": \"Teacher\",\n  \"institutionName\": \"ABC College\",\n  \"gradeOrSubject\": \"Mathematics\",\n  \"marketingPreferences\": {\n    \"optInEmail\": true,\n    \"optInSMS\": false,\n    \"optInPush\": false,\n    \"preferredContentType\": \"Newsletters\"\n  },\n  \"deviceType\": \"Desktop\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/signup"
+      }
+    },
+    {
+      "name": "Duplicate Email",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Azam\",\n  \"lastName\": \"Khan\",\n  \"email\": \"{{signupEmail}}\",\n  \"password\": \"TestPassword123!\",\n  \"role\": \"Student\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/signup"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('HTTP 409', function () { pm.response.to.have.status(409); });",
+              "pm.test('Duplicate message returned', function () { pm.expect(pm.response.json().message).to.include('already exists'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validation - Invalid Request",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"A\",\n  \"lastName\": \"Khan\",\n  \"email\": \"not-an-email\",\n  \"password\": \"weak\",\n  \"role\": \"InvalidRole\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/signup"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('HTTP 400', function () { pm.response.to.have.status(400); });",
+              "pm.test('Validation response returned', function () { pm.expect(pm.response.json().message).to.eql('Validation failed'); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

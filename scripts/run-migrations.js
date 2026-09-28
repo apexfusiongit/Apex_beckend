@@ -10,14 +10,11 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
-const DB_NAME = 'apex-fusion-db';
+const DB_NAME = 'apex-fusion-marketing-db';
+const MARKETING_MIGRATION = '0001_marketing_signup.sql';
 
 function getMigrationFiles() {
-  const files = fs.readdirSync(MIGRATIONS_DIR)
-    .filter(file => file.endsWith('.sql'))
-    .sort(); // Sort alphabetically which works with numeric prefixes
-  
-  return files;
+  return [MARKETING_MIGRATION];
 }
 
 async function runMigration(migrationFile, isLocal = false) {
