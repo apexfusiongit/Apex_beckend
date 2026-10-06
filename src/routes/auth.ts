@@ -1,120 +1,116 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { hashPassword, verifyPassword } from '../utils/password';
-import { validate } from '../middleware/validation';
-import { registerUserSchema, loginUserSchema } from '../validators/schemas';
+import { createToken } from '../utils/token';
+import { authMiddleware } from '../middleware/auth';
 
-type Bindings = {
-  DB: D1Database;
-  JWT_SECRET?: string;
-  ADMIN_EMAIL?: string;
-  ADMIN_PASSWORD?: string;
-  ADMIN_CODE?: string;
-};
-
-type Variables = {
-  validatedData?: any;
-};
+type Bindings = { DB: D1Database; JWT_SECRET?: string };
+type Variables = { userId: number; userEmail: string; userRole: string };
 
 const auth = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+const registrationSchema = z.object({
+  name: z.string().min(2).max(100).optional(),
+  firstName: z.string().min(1).max(50).optional(),
+  lastName: z.string().max(50).optional().default(''),
+  email: z.string().email().max(254),
+  phone: z.string().max(30).optional().nullable(),
+  phoneNumber: z.string().max(30).optional().nullable(),
+  password: z.string().min(8).max(128),
+  role: z.enum(['student', 'teacher', 'admin', 'school', 'Student', 'Teacher', 'Admin', 'School']).default('student'),
+  class: z.string().max(40).optional().nullable(),
+  gradeOrSubject: z.string().max(100).optional().nullable(),
+}).refine((value) => Boolean(value.name || value.firstName), { message: 'Name is required.' });
+const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) });
 
-// Simple JWT token generation (for development - use proper JWT library in production)
-function generateToken(userId: number, email: string, role: string): string {
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = btoa(JSON.stringify({ userId, email, role, exp: Date.now() + 3600000 }));
-  const signature = btoa(`${header}.${payload}.secret`);
-  return `${header}.${payload}.${signature}`;
+function normalizedRole(role: string): string {
+  return role.toLowerCase();
 }
 
-// Register new user
-auth.post('/register', validate(registerUserSchema), async (c) => {
-  const data = c.get('validatedData') as z.infer<typeof registerUserSchema>;
-  const { name, email, phone, password, role, class: studentClass, adminCode } = data;
-  
-  // Check if email already exists
-  const existingUser = await c.env.DB.prepare(
-    'SELECT id FROM users WHERE email = ?'
-  ).bind(email).first();
-  
-  if (existingUser) {
-    return c.json({ 
-      success: false, 
-      message: 'Email already registered. Please use a different email or login.' 
-    }, 409);
+function splitName(name: string | undefined, firstName: string | undefined, lastName: string): [string, string] {
+  if (firstName) return [firstName.trim(), lastName.trim()];
+  const pieces = (name ?? '').trim().split(/\s+/);
+  return [pieces.shift() ?? '', pieces.join(' ')];
+}
+
+auth.post('/register', async (c) => {
+  const secret = c.env.JWT_SECRET;
+  if (!secret) return c.json({ success: false, message: 'Authentication is not configured.' }, 503);
+  const parsed = registrationSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ success: false, message: 'Invalid registration details.', issues: parsed.error.issues }, 400);
+
+  const data = parsed.data;
+  const email = data.email.trim().toLowerCase();
+  const role = normalizedRole(data.role);
+  const [firstName, lastName] = splitName(data.name, data.firstName, data.lastName);
+  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  if (existing) return c.json({ success: false, message: 'An account with this email already exists.' }, 409);
+
+  // The public registration endpoint never accepts privileged roles.
+  if (role !== 'student' && role !== 'teacher') {
+    return c.json({ success: false, message: 'This role cannot be registered publicly.' }, 403);
   }
-  
-  // Admin registration requires admin code
-  if (role === 'admin') {
-    if (adminCode !== (c.env.ADMIN_CODE ?? 'ADMIN_SECRET_2026')) {
-      return c.json({ success: false, message: 'Invalid admin code' }, 403);
-    }
-  }
-  
-  // Students and teachers require class
-  if ((role === 'student' || role === 'teacher') && !studentClass) {
-    return c.json({ success: false, message: 'Class is required for students and teachers' }, 400);
-  }
-  
   try {
-    const passwordHash = await hashPassword(password);
-    
+    const passwordHash = await hashPassword(data.password);
     const result = await c.env.DB.prepare(
-      'INSERT INTO users (name, email, phone, password_hash, role, "class") VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(name, email, phone ?? null, passwordHash, role || 'student', studentClass ?? null).run();
-    
-    const userId = result.meta.last_row_id;
-    const token = generateToken(userId, email, role || 'student');
-    
-    return c.json({ 
-      success: true, 
-      userId, 
-      token, 
-      user: { id: userId, name, email, role: role || 'student', class: studentClass } 
-    }, 201);
-  } catch (error: any) {
-    console.error('Registration error:', error);
-    return c.json({ success: false, message: error.message || 'Registration failed' }, 400);
+      'INSERT INTO users (name, email, phone, password_hash, role, class, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(`${firstName} ${lastName}`.trim(), email, data.phone ?? data.phoneNumber ?? null, passwordHash, role, data.class ?? data.gradeOrSubject ?? null, 'active').run();
+    const id = Number(result.meta.last_row_id);
+    const user = { id, name: `${firstName} ${lastName}`.trim(), email, role, class: data.class ?? data.gradeOrSubject ?? undefined };
+    const token = await createToken({ sub: String(id), email, role, exp: Math.floor(Date.now() / 1000) + 60 * 60 }, secret);
+    return c.json({ success: true, token, user }, 201);
+  } catch (error) {
+    console.error('Registration failed', error instanceof Error ? error.message : 'unknown error');
+    return c.json({ success: false, message: 'Unable to complete registration.' }, 500);
   }
 });
 
-// Login user
-auth.post('/login', validate(loginUserSchema), async (c) => {
-  const data = c.get('validatedData') as z.infer<typeof loginUserSchema>;
-  const { email, password } = data;
-  
+auth.post('/login', async (c) => {
+  const secret = c.env.JWT_SECRET;
+  if (!secret) return c.json({ success: false, message: 'Authentication is not configured.' }, 503);
+  const parsed = loginSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ success: false, message: 'Invalid email or password.' }, 400);
+  const email = parsed.data.email.trim().toLowerCase();
   const user = await c.env.DB.prepare(
-    'SELECT id, first_name, last_name, email, phone_number, role, password_hash, status FROM users WHERE email = ?'
+    'SELECT id, name, email, phone, role, password_hash, status FROM users WHERE email = ?'
   ).bind(email).first<{
-    id: number;
-    first_name: string;
-    last_name: string;
-    email: string;
-    phone_number: string | null;
-    role: string;
-    password_hash: string;
-    status: string;
+    id: number; name: string; email: string; phone: string | null; role: string; password_hash: string; status: string;
   }>();
 
-  if (!user || user.status !== 'Active' || !(await verifyPassword(password, user.password_hash))) {
-    return c.json({ success: false, message: 'Invalid email or password' }, 401);
+  let passwordValid = Boolean(user && await verifyPassword(parsed.data.password, user.password_hash ?? ''));
+  if (user && !passwordValid) {
+    const aliases = await c.env.DB.prepare('SELECT password_hash FROM user_password_aliases WHERE user_id = ? LIMIT 5')
+      .bind(user.id).all<{ password_hash: string }>().catch(() => ({ results: [] as { password_hash: string }[] }));
+    for (const alias of aliases.results) {
+      if (await verifyPassword(parsed.data.password, alias.password_hash)) {
+        passwordValid = true;
+        break;
+      }
+    }
   }
-  
-  const token = generateToken(user.id as number, user.email as string, user.role as string);
-  
-  const { password_hash, ...userWithoutPassword } = user;
-  
-  // Return user data with role for frontend routing
-  return c.json({ 
-    success: true, 
-    token, 
-    user: {
-      id: user.id,
-      name: `${user.first_name} ${user.last_name}`,
-      email: user.email,
-      phone: user.phone_number,
-      role: user.role
-    },
-  });
+  if (!user || user.status.toLowerCase() !== 'active' || !passwordValid) {
+    return c.json({ success: false, message: 'Invalid email or password.' }, 401);
+  }
+  const role = normalizedRole(user.role);
+  const token = await createToken({ sub: String(user.id), email: user.email, role, exp: Math.floor(Date.now() / 1000) + 60 * 60 }, secret);
+  await c.env.DB.prepare("INSERT INTO signup_activity (user_id, action_type) VALUES (?, 'Login')").bind(user.id).run().catch(() => undefined);
+  return c.json({ success: true, token, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role } });
+});
+
+auth.get('/me', authMiddleware, async (c) => {
+  const user = await c.env.DB.prepare(
+    'SELECT id, name, email, phone, role FROM users WHERE id = ?'
+  ).bind(c.get('userId')).first<{
+    id: number; name: string; email: string; phone: string | null; role: string;
+  }>();
+  if (!user) return c.json({ success: false, message: 'Account not found.' }, 404);
+  return c.json({ success: true, user: {
+    id: user.id, name: user.name, email: user.email, phone: user.phone, role: normalizedRole(user.role),
+  } });
+});
+
+auth.post('/logout', authMiddleware, async (c) => {
+  await c.env.DB.prepare("INSERT INTO signup_activity (user_id, action_type) VALUES (?, 'Logout')").bind(c.get('userId')).run();
+  return c.json({ success: true });
 });
 
 export default auth;

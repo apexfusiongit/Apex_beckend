@@ -37,8 +37,8 @@ marketingSignup.post('/', validate(marketingSignupSchema), async (c) => {
 
     await c.env.DB.batch([
       c.env.DB.prepare(
-        'INSERT INTO users (role, first_name, last_name, email, phone_number, password_hash, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      ).bind(data.role, data.firstName, data.lastName, normalizedEmail, data.phoneNumber ?? null, passwordHash, 'Active'),
+        'INSERT INTO users (name, email, phone, password_hash, role, class, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(`${data.firstName} ${data.lastName}`, normalizedEmail, data.phoneNumber ?? null, passwordHash, data.role.toLowerCase(), data.gradeOrSubject ?? null, 'active'),
       c.env.DB.prepare(
         `INSERT INTO profiles (user_id, dob, gender, location, institution_name, grade_or_subject)
          VALUES ((SELECT id FROM users WHERE email = ?), ?, ?, ?, ?, ?)`

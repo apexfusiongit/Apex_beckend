@@ -1,82 +1,60 @@
 #!/usr/bin/env node
 
 /**
- * Migration Runner for D1 Database
- * Runs all migration files in order from the migrations directory
+ * Applies the reviewed, non-destructive migration sequence. Defaults to local;
+ * pass --remote explicitly to change production D1.
  */
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
+const dbName = 'apex-fusion-db';
+const migrationsDir = path.join(__dirname, '..', 'migrations');
+const local = !process.argv.includes('--remote');
+const location = local ? ['--local'] : ['--remote'];
 
-const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
-const DB_NAME = 'apex-fusion-marketing-db';
-const MARKETING_MIGRATION = '0001_marketing_signup.sql';
-
-function getMigrationFiles() {
-  return [MARKETING_MIGRATION];
+function wrangler(args) {
+  const config = local ? ['--config', 'wrangler.local.toml'] : ['--config', 'wrangler.toml'];
+  const output = execFileSync('npx', ['wrangler', ...config, 'd1', 'execute', dbName, ...location, ...args, '--yes', '--json'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const jsonStart = output.indexOf('[\n');
+  return JSON.parse(jsonStart >= 0 ? output.slice(jsonStart) : output);
 }
 
-async function runMigration(migrationFile, isLocal = false) {
-  const filePath = path.join(MIGRATIONS_DIR, migrationFile);
-  console.log(`\n📋 Running migration: ${migrationFile}`);
-  
-  try {
-    const localFlag = isLocal ? '--local' : '';
-    const command = `npx wrangler d1 execute ${DB_NAME} ${localFlag} --file="${filePath}"`;
-    execSync(command, { stdio: 'inherit' });
-    console.log(`✅ Migration ${migrationFile} completed successfully`);
-    return true;
-  } catch (error) {
-    console.error(`❌ Migration ${migrationFile} failed:`, error.message);
-    return false;
-  }
+function executeFile(name) {
+  console.log(`Applying ${name} to ${local ? 'local' : 'remote'} D1`);
+  wrangler(['--file', path.join(migrationsDir, name)]);
 }
 
-async function runAllMigrations(isLocal = false) {
-  const migrationFiles = getMigrationFiles();
-  
-  if (migrationFiles.length === 0) {
-    console.log('No migration files found.');
-    return;
-  }
-  
-  console.log(`Found ${migrationFiles.length} migration files`);
-  console.log('=====================================');
-  
-  let successCount = 0;
-  let failCount = 0;
-  
-  for (const file of migrationFiles) {
-    const success = await runMigration(file, isLocal);
-    if (success) {
-      successCount++;
-    } else {
-      failCount++;
-      console.log(`⚠️  Stopping migration run due to failure`);
-      break;
+function execute(command) {
+  return wrangler(['--command', command]);
+}
+
+function query(sql) {
+  const response = execute(sql);
+  return response.flatMap((item) => item.results ?? []);
+}
+
+function main() {
+  execute('CREATE TABLE IF NOT EXISTS _applied_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
+  const applied = new Set(query('SELECT name FROM _applied_migrations').map((row) => row.name));
+  const ordered = ['0001_core_baseline.sql', '0031_platform_extensions.sql', '0032_payment_webhooks.sql'];
+
+  for (const name of ordered) {
+    if (applied.has(name)) {
+      console.log(`Skipping already applied ${name}`);
+      continue;
     }
+    executeFile(name);
+    execute(`INSERT INTO _applied_migrations (name) VALUES ('${name}')`);
   }
-  
-  console.log('\n=====================================');
-  console.log(`Migration Summary:`);
-  console.log(`✅ Successful: ${successCount}`);
-  console.log(`❌ Failed: ${failCount}`);
-  console.log(`📊 Total: ${migrationFiles.length}`);
+  console.log(`Migrations complete on ${local ? 'local' : 'remote'} D1.`);
 }
 
-async function main() {
-  const args = process.argv.slice(2);
-  const isLocal = args.includes('--local') || args.includes('-l');
-  const specificMigration = args.find(arg => !arg.startsWith('--') && !arg.startsWith('-'));
-  
-  if (specificMigration) {
-    console.log(`Running specific migration: ${specificMigration}`);
-    await runMigration(specificMigration, isLocal);
-  } else {
-    console.log(`Running all migrations ${isLocal ? '(local)' : '(production)'}`);
-    await runAllMigrations(isLocal);
-  }
+try {
+  main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exitCode = 1;
 }
-
-main().catch(console.error);

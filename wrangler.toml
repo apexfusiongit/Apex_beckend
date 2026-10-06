@@ -4,11 +4,15 @@ compatibility_date = "2024-01-01"
 
 [vars]
 ENVIRONMENT = "production"
-CORS_ORIGIN = "http://localhost:5173"
+CORS_ORIGIN = "https://apex-fusion.admin-apexfusion.workers.dev,http://localhost:5173"
+PAYMENT_MODE = "test"
 
 # D1 Database binding
 [[d1_databases]]
 binding = "DB"
-database_name = "apex-fusion-marketing-db"
-database_id = "e37e59e4-e711-4c16-93d6-a2cb89426853"
+database_name = "apex-fusion-db"
+database_id = "071fab92-f25c-4932-a110-11b38579bc38"
 
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "apex-fusion-storage"

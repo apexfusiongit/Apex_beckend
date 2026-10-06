@@ -1,288 +1,38 @@
-# Apex Fusion Backend Deployment Guide
+# Backend deployment
 
-This guide covers deploying the Apex Fusion backend to Cloudflare Workers.
+## Existing Cloudflare resources
 
-## Prerequisites
+- Worker: `apex-backend` (`https://apex-backend.admin-apexfusion.workers.dev`)
+- Learning D1: `apex-fusion-db` (`071fab92-f25c-4932-a110-11b38579bc38`)
+- Signup D1: `apex-fusion-marketing-db` (`e37e59e4-e711-4c16-93d6-a2cb89426853`)
+- R2: `apex-fusion-storage`
+- Frontend: `https://apex-fusion.admin-apexfusion.workers.dev` (Cloudflare Pages on Workers Assets)
 
-- Node.js 18+ installed
-- Cloudflare account with Workers enabled
-- Wrangler CLI installed: `npm install -g wrangler`
-- D1 database created
-- R2 bucket created (for video storage)
-- KV namespace created (for caching)
+The Worker uses `apex-fusion-db`, which contains the learning platform accounts and course data. The marketing D1 remains intact as a backup/source; its seven signup accounts, profiles, preferences, and eleven activity records were copied into the learning D1. One same-email student account had two distinct password hashes; both are retained so either existing credential continues to work.
 
-## Environment Variables
+## Local setup
 
-Configure the following environment variables in your Cloudflare Workers dashboard or `wrangler.toml`:
+1. Install dependencies with `npm ci`.
+2. Copy `.dev.vars.example` to `.dev.vars`; set a unique local `JWT_SECRET`.
+3. From `backend/`, run `npm run db:migrate:local`, then `npm run dev:local`.
+4. Use `http://localhost:8787/health` and `http://localhost:5173`.
 
-```toml
-[vars]
-ENVIRONMENT = "production"
-PAYMENT_SECRET = "your_payment_gateway_secret"
-PAYMENT_WEBHOOK_SECRET = "your_webhook_secret"
-ADMIN_CODE = "your_admin_registration_code"
+The migration runner defaults to local D1. `npm run db:migrate -- --remote` targets production and must only be run after reviewing the migration and backing up the target database. The additive migration was tested against a schema-only export and applied to production on 2026-10-06. Both pre-migration D1 backups are in `/tmp/apex-fusion-backups-20261006` on the operator machine, with mode `0600`.
 
-[[d1_databases]]
-binding = "DB"
-database_name = "apex_fusion_db"
-database_id = "your_database_id"
+## Worker configuration and secrets
 
-[[r2_buckets]]
-binding = "STORAGE"
-bucket_name = "apex_fusion_videos"
+`wrangler.toml` binds the existing learning D1 and R2 bucket. Do not create replacements. `CORS_ORIGIN` allows the deployed frontend origin and localhost development.
 
-[[kv_namespaces]]
-binding = "CACHE"
-id = "your_kv_namespace_id"
-```
+JWT, admin, AI, and payment credentials are Worker secrets. Do not put secret values in `wrangler.toml`, `.env.example`, or Git. The ₹300 monthly checkout, order verification, subscription activation, payment history/status APIs, and signed idempotent webhook handler are implemented. `PAYMENT_MODE` is set to `test`; production currently has no `PAYMENT_KEY_ID`, so checkout remains disabled until a Razorpay Test Key ID is configured.
 
-## Database Setup
+## Deployment sequence
 
-### 1. Create D1 Database
+1. Back up both D1 databases.
+2. Review/apply additive migrations to `apex-fusion-db`.
+3. Reconcile signup accounts into the core D1 without overwriting existing same-email credentials.
+4. Run `npm run typecheck` and `npm run build`.
+5. Set exact production CORS and deploy with `npx wrangler deploy`.
+6. Build the frontend with `VITE_API_URL=https://apex-backend.admin-apexfusion.workers.dev` and deploy `dist/`.
+7. Verify health, browser CORS, signup/login, role gates, and actual R2 upload/playback.
 
-```bash
-wrangler d1 create apex_fusion_db
-```
-
-Note the database ID and add it to `wrangler.toml`.
-
-### 2. Run Migrations
-
-```bash
-# Apply all migrations
-wrangler d1 execute apex_fusion_db --file=./migrations/0001_users.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0002_subjects.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0003_courses.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0004_lessons.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0005_enrollments.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0006_progress.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0007_tests.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0008_questions.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0009_attempts.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0010_subscriptions.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0011_payments.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0012_referrals.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0013_ai.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0014_live_classes.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0015_classes.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0016_chapters.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0017_course_materials.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0018_video_assets.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0019_teacher_courses.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0020_notifications.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0021_audit_logs.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0022_sessions.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0023_devices.sql
-wrangler d1 execute apex_fusion_db --file=./migrations/0024_attempt_answers.sql
-```
-
-### 3. Create R2 Bucket
-
-```bash
-wrangler r2 bucket create apex_fusion_videos
-```
-
-### 4. Create KV Namespace
-
-```bash
-wrangler kv namespace create CACHE
-```
-
-Note the KV namespace ID and add it to `wrangler.toml`.
-
-## Build and Deploy
-
-### 1. Install Dependencies
-
-```bash
-npm install
-```
-
-### 2. Build TypeScript
-
-```bash
-npm run build
-```
-
-### 3. Deploy to Cloudflare Workers
-
-```bash
-wrangler deploy
-```
-
-This will deploy your worker to Cloudflare and make it accessible at the URL provided.
-
-## Configuration
-
-### wrangler.toml
-
-Create or update `wrangler.toml` in your project root:
-
-```toml
-name = "apex-fusion-backend"
-main = "src/index.ts"
-compatibility_date = "2024-01-01"
-
-[vars]
-ENVIRONMENT = "production"
-PAYMENT_SECRET = "your_payment_gateway_secret"
-PAYMENT_WEBHOOK_SECRET = "your_webhook_secret"
-ADMIN_CODE = "your_admin_registration_code"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "apex_fusion_db"
-database_id = "your_database_id"
-
-[[r2_buckets]]
-binding = "STORAGE"
-bucket_name = "apex_fusion_videos"
-
-[[kv_namespaces]]
-binding = "CACHE"
-id = "your_kv_namespace_id"
-```
-
-## Payment Gateway Integration
-
-### Razorpay Integration
-
-1. Create a Razorpay account
-2. Get API keys from Razorpay dashboard
-3. Set `PAYMENT_SECRET` to your Razorpay key secret
-4. Configure webhook URL in Razorpay dashboard: `https://your-worker-url/api/payments/webhook`
-5. Set `PAYMENT_WEBHOOK_SECRET` to your Razorpay webhook secret
-
-### Stripe Integration (Alternative)
-
-1. Create a Stripe account
-2. Get API keys from Stripe dashboard
-3. Set `PAYMENT_SECRET` to your Stripe secret key
-4. Configure webhook endpoint in Stripe dashboard
-5. Set `PAYMENT_WEBHOOK_SECRET` to your Stripe webhook signing secret
-
-## Video Upload to R2
-
-### Upload Videos
-
-Use the Cloudflare R2 API or Wrangler CLI to upload videos:
-
-```bash
-# Using Wrangler
-wrangler r2 object put apex_fusion_videos/videos/lesson1.mp4 --file=./local_videos/lesson1.mp4
-```
-
-Or use the R2 API in your application:
-
-```typescript
-await c.env.STORAGE.put('videos/lesson1.mp4', videoData);
-```
-
-### Access Videos
-
-Videos are accessed via the `/api/lessons/:id/video` endpoint, which requires:
-- Valid JWT authentication
-- User enrollment in the course containing the lesson
-
-## Monitoring and Logging
-
-### Cloudflare Dashboard
-
-Monitor your worker through the Cloudflare dashboard:
-- View logs in real-time
-- Monitor request metrics
-- Check error rates
-- View analytics
-
-### Local Development
-
-For local development with Wrangler:
-
-```bash
-wrangler dev
-```
-
-This starts a local development server at `http://localhost:8787`.
-
-## Security Best Practices
-
-1. **Environment Variables**: Never commit secrets to version control
-2. **API Keys**: Rotate payment gateway secrets regularly
-3. **CORS**: Configure CORS settings in `src/index.ts` for your frontend domain
-4. **Rate Limiting**: Implement rate limiting for sensitive endpoints
-5. **Input Validation**: Validate all user inputs
-6. **SQL Injection**: Use parameterized queries (already implemented)
-
-## Scaling
-
-Cloudflare Workers automatically scale based on traffic:
-- No server management required
-- Global edge network
-- Automatic scaling
-- DDoS protection included
-
-## Troubleshooting
-
-### Database Connection Issues
-
-- Verify D1 database ID in `wrangler.toml`
-- Check database migrations are applied
-- Test database connectivity via Wrangler CLI
-
-### R2 Access Issues
-
-- Verify R2 bucket binding in `wrangler.toml`
-- Check bucket permissions
-- Verify video keys match uploaded files
-
-### Authentication Failures
-
-- Verify JWT token generation
-- Check token expiration settings
-- Ensure middleware is applied correctly
-
-### Payment Webhook Issues
-
-- Verify webhook URL is accessible
-- Check webhook signature verification
-- Test with payment gateway sandbox
-
-## Rollback
-
-To rollback to a previous version:
-
-```bash
-# View deployment history
-wrangler deployments list
-
-# Rollback to specific version
-wrangler rollback <deployment-id>
-```
-
-## Production Checklist
-
-Before deploying to production:
-
-- [ ] All database migrations applied
-- [ ] Environment variables configured
-- [ ] Payment gateway configured and tested
-- [ ] R2 bucket created and accessible
-- [ ] KV namespace created
-- [ ] CORS configured for frontend domain
-- [ ] Admin code set and secured
-- [ ] Health check endpoint responding
-- [ ] Authentication flow tested
-- [ ] Payment flow tested in sandbox
-- [ ] Video upload and access tested
-- [ ] Error monitoring configured
-- [ ] Logging configured
-- [ ] Rate limiting configured
-- [ ] SSL/TLS enabled (automatic with Cloudflare)
-
-## Support
-
-For issues or questions:
-- Cloudflare Workers documentation: https://developers.cloudflare.com/workers/
-- D1 documentation: https://developers.cloudflare.com/d1/
-- R2 documentation: https://developers.cloudflare.com/r2/
-- Hono documentation: https://hono.dev/
+The frontend is deployed at version `98764abe-2971-42a2-bc5b-8d176a3ab506`; the API is at `2dfdcadb-df18-4eae-8151-9101677737a5`. The auth, role-gated upload, R2 playback, demo/public and paid/subscription checks have passed locally and in production. Video demo access is stored per asset so adding a demo clip cannot expose other clips in its lesson. Payment API auth, role checks, configuration gating, webhook signature rejection, duplicate event handling, and payment activation idempotency have local coverage. Production currently reports checkout disabled. Configure matching `rzp_test_` Key ID/secret plus a test webhook secret, then run a real sandbox payment and replay the webhook to verify it end-to-end. Do not set `PAYMENT_MODE=live` until that passes.

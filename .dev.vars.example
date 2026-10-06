@@ -2,3 +2,7 @@
 JWT_SECRET=replace-with-a-long-random-local-secret
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-with-a-local-admin-password
+PAYMENT_KEY_ID=replace-with-valid-rzp_test-key-id
+PAYMENT_SECRET=replace-with-a-sandbox-secret
+PAYMENT_WEBHOOK_SECRET=replace-with-a-sandbox-webhook-secret
+PAYMENT_MODE=test
